@@ -1,10 +1,18 @@
 AM_CPPFLAGS = 				\
 	-Werror				\
-	-I$(top_srcdir)/inc		\
+	-I$(top_srcdir)/inc
+
+bin_PROGRAMS = s3
+
+s3_SOURCES = s3.c
+s3_LDADD = libs3.la
+
+lib_LTLIBRARIES = libs3.la
+
+libs3_la_CFLAGS =			\
 	$(LIBCURL_CFLAGS)		\
 	$(LIBXML_CFLAGS)
 
-lib_LTLIBRARIES = libs3.la
 libs3_la_SOURCES = 			\
 	acl.c				\
 	bucket.c			\
