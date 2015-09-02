@@ -856,15 +856,13 @@ static S3Status setup_curl(Request *request,
 
     // I think this is useful - we don't need interactive performance, we need
     // to complete large operations quickly
-    curl_easy_setopt_safe(CURLOPT_TCP_NODELAY, 1);
+    curl_easy_setopt_safe(CURLOPT_TCP_NODELAY, 0);
     
     // Don't use Curl's 'netrc' feature
     curl_easy_setopt_safe(CURLOPT_NETRC, CURL_NETRC_IGNORED);
 
-    // Don't verify S3's certificate, there are known to be issues with
-    // them sometimes
-    // xxx todo - support an option for verifying the S3 CA (default false)
-    curl_easy_setopt_safe(CURLOPT_SSL_VERIFYPEER, 0);
+    // Ensure peer TLS verification is enabled.
+    curl_easy_setopt_safe(CURLOPT_SSL_VERIFYPEER, 1);
 
     // Follow any redirection directives that S3 sends
     curl_easy_setopt_safe(CURLOPT_FOLLOWLOCATION, 1);
