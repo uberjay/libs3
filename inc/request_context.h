@@ -33,8 +33,13 @@ struct S3RequestContext
 {
     CURLM *curlm;
 
+    S3RequestContextSocketCallback *socketCallback;
+    void *socketCallbackData;
+
+    S3RequestContextTimerCallback *timerCallback;
+    void *timerCallbackData;
+
     struct Request *requests;
 };
-
 
 #endif /* REQUEST_CONTEXT_H */

@@ -50,6 +50,142 @@ S3Status S3_create_request_context(S3RequestContext **requestContextReturn)
     return S3StatusOK;
 }
 
+static int curlSocketCallback(CURL *easy, curl_socket_t s, int action,
+                              void *userp, void *socketp)
+{
+    S3RequestContext *requestContext = userp;
+    S3SocketContext *socketContext = socketp;
+
+    if (!socketContext) {
+        socketContext = (S3SocketContext *)calloc(1, sizeof *socketContext);
+        if (!socketContext) {
+            return 0;
+        }
+        socketContext->osSocket = s;
+        curl_multi_assign(requestContext->curlm, s, socketContext);
+    }
+
+    (*requestContext->socketCallback)
+        (requestContext, socketContext, action,
+         requestContext->socketCallbackData);
+
+    if (action == S3SocketActionRemove)
+        free(socketContext);
+
+    return 0;
+}
+
+S3Status S3_set_request_context_socket_function(
+    S3RequestContext *requestContext,
+    S3RequestContextSocketCallback *callback, void *callbackData)
+{
+    requestContext->socketCallback = callback;
+    requestContext->socketCallbackData = callbackData;
+
+    curl_multi_setopt(requestContext->curlm, CURLMOPT_SOCKETFUNCTION,
+                      curlSocketCallback);
+    curl_multi_setopt(requestContext->curlm, CURLMOPT_SOCKETDATA,
+                      requestContext);
+
+    return S3StatusOK;
+}
+
+static int curlTimerCallback(CURLM *curlm, long timeout_ms, void *userp)
+{
+    S3RequestContext *requestContext = userp;
+
+    (*requestContext->timerCallback)
+        (requestContext, timeout_ms, requestContext->timerCallbackData);
+
+    return 0;
+}
+
+S3Status S3_set_request_context_timer_function(
+    S3RequestContext *requestContext,
+    S3RequestContextTimerCallback *callback, void *callbackData)
+{
+    requestContext->timerCallback = callback;
+    requestContext->timerCallbackData = callbackData;
+
+    curl_multi_setopt(requestContext->curlm, CURLMOPT_TIMERFUNCTION,
+                      curlTimerCallback);
+    curl_multi_setopt(requestContext->curlm, CURLMOPT_TIMERDATA,
+                      requestContext);
+
+    return S3StatusOK;
+}
+
+S3Status S3_run_socket_request_context(S3RequestContext *requestContext,
+                                       S3Socket osSocket, int eventMask,
+                                       int *requestsRemainingReturn)
+{
+    CURLMcode status;
+    int curlEventMask = 0;
+
+    if (eventMask & S3_SOCK_EV_IN)
+        curlEventMask |= CURL_CSELECT_IN;
+    if (eventMask & S3_SOCK_EV_OUT)
+        curlEventMask |= CURL_CSELECT_OUT;
+    if (eventMask & S3_SOCK_EV_ERR)
+        curlEventMask |= CURL_CSELECT_ERR;
+
+    do {
+        status = curl_multi_socket_action(requestContext->curlm, osSocket,
+                                          curlEventMask,
+                                          requestsRemainingReturn);
+
+        switch (status) {
+        case CURLM_OK:
+        case CURLM_CALL_MULTI_PERFORM:
+            break;
+        case CURLM_OUT_OF_MEMORY:
+            return S3StatusOutOfMemory;
+        default:
+            return S3StatusInternalError;
+        }
+
+        CURLMsg *msg;
+        int junk;
+        while ((msg = curl_multi_info_read(requestContext->curlm, &junk))) {
+            if (msg->msg != CURLMSG_DONE) {
+                return S3StatusInternalError;
+            }
+            Request *request;
+            if (curl_easy_getinfo(msg->easy_handle, CURLINFO_PRIVATE,
+                                  (char **) (char *) &request) != CURLE_OK) {
+                return S3StatusInternalError;
+            }
+            // Remove the request from the list of requests
+            if (request->prev == request->next) {
+                // It was the only one on the list
+                requestContext->requests = 0;
+            }
+            else {
+                // It doesn't matter what the order of them are, so just in
+                // case request was at the head of the list, put the one after
+                // request to the head of the list
+                requestContext->requests = request->next;
+                request->prev->next = request->next;
+                request->next->prev = request->prev;
+            }
+            if ((msg->data.result != CURLE_OK) &&
+                (request->status == S3StatusOK)) {
+                request->status = request_curl_code_to_status
+                    (msg->data.result);
+            }
+            if (curl_multi_remove_handle(requestContext->curlm,
+                                         msg->easy_handle) != CURLM_OK) {
+                return S3StatusInternalError;
+            }
+            // Finish the request, ensuring that all callbacks have been made,
+            // and also releases the request
+            request_finish(request);
+        }
+
+    } while (status == CURLM_CALL_MULTI_PERFORM);
+
+    return S3StatusOK;
+}
 
 void S3_destroy_request_context(S3RequestContext *requestContext)
 {

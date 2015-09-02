@@ -492,6 +492,9 @@ typedef enum
  **/
 typedef struct S3RequestContext S3RequestContext;
 
+/**
+ **/
+typedef struct S3RequestContextSocket S3RequestContextSocket;
 
 /**
  * S3NameValue represents a single Name - Value pair, used to represent either
@@ -961,6 +964,39 @@ typedef struct S3ErrorDetails
     S3NameValue *extraDetails;
 } S3ErrorDetails;
 
+typedef int S3Socket;
+
+#define S3_SOCK_EV_IN  (1 << 0)
+#define S3_SOCK_EV_OUT (1 << 1)
+#define S3_SOCK_EV_ERR (1 << 2)
+
+#define S3_SOCK_TIMEOUT -1
+
+typedef enum {
+    S3SocketActionNone = 0,
+    S3SocketActionIn = 1,
+    S3SocketActionOut = 2,
+    S3SocketActionInOut = 3,
+    S3SocketActionRemove = 4,
+} S3SocketAction;
+
+/**
+ * An S3SocketContext allows an application to store additional opaque data on a
+ * per-socket basis.
+ **/
+typedef struct S3SocketContext
+{
+    /**
+     * OS-specific socket. XXX: only supports operating systems with fd numbers.
+     **/
+    S3Socket osSocket;
+
+    /**
+     * Application-specific per-socket scratch space.
+     **/
+    void *socketData;
+} S3SocketContext;
+
 
 /** **************************************************************************
  * Callback Signatures
@@ -1110,7 +1146,19 @@ typedef int (S3PutObjectDataCallback)(int bufferSize, char *buffer,
  **/
 typedef S3Status (S3GetObjectDataCallback)(int bufferSize, const char *buffer,
                                            void *callbackData);
-                                       
+
+/**
+ **/
+typedef void (S3RequestContextSocketCallback)(S3RequestContext *requestContext,
+                                              S3SocketContext *socketContext,
+                                              S3SocketAction action,
+                                              void *callbackData);
+
+/**
+ **/
+typedef void (S3RequestContextTimerCallback)(S3RequestContext *requestContext,
+                                             long timeout,
+                                             void *callbackData);
 
 
 typedef S3Status (S3MultipartCommitResponseCallback)(const char * location, const char * etag, void * callbackData);
@@ -1145,7 +1193,6 @@ typedef S3Status (S3ListPartsResponseCallback)(int isTruncated,
 /** **************************************************************************
  * Callback Structures
  ************************************************************************** **/
-
 
 /**
  * An S3ResponseHandler defines the callbacks which are made for any
@@ -1491,6 +1538,17 @@ S3Status S3_create_request_context(S3RequestContext **requestContextReturn);
  **/
 void S3_destroy_request_context(S3RequestContext *requestContext);
 
+S3Status S3_set_request_context_socket_function(
+    S3RequestContext *requestContext,
+    S3RequestContextSocketCallback *callback, void *callbackData);
+
+S3Status S3_set_request_context_timer_function(
+    S3RequestContext *requestContext,
+    S3RequestContextTimerCallback *callback, void *callbackData);
+
+S3Status S3_run_socket_request_context(S3RequestContext *requestContext,
+                                       S3Socket osSocket, int eventMask,
+                                       int *requestsRemainingReturn);
 
 /**
  * Runs the S3RequestContext until all requests within it have completed,
