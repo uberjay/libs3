@@ -139,6 +139,7 @@ static void request_headers_done(Request *request)
     // Only make the callback if it was a successful request; otherwise we're
     // returning information about the error response itself
     if (request->propertiesCallback &&
+        request->status == S3StatusOK &&
         (request->httpResponseCode >= 200) &&
         (request->httpResponseCode <= 299)) {
         request->status = (*(request->propertiesCallback))
