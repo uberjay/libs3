@@ -40,6 +40,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include "libs3.h"
 
 // Some Windows stuff
@@ -1610,9 +1611,9 @@ static S3Status listPartsCallback(int isTruncated,
             strftime(timebuf, sizeof(timebuf), "%Y-%m-%dT%H:%M:%SZ",
                      gmtime(&t));
             printf("%-30s", timebuf);
-            printf("%-15llu", part->partNumber);
+            printf("%-15" PRIu64, part->partNumber);
             printf("%-45s", part->eTag);
-            printf("%-15llu\n", part->size);
+            printf("%-15" PRIu64 "\n", part->size);
 
         }
     }
