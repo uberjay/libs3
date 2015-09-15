@@ -59,16 +59,18 @@ make %{?_smp_mflags}
 
 %install
 %make_install
+rm %{buildroot}/%{_libdir}/*.la
 
 %files
 %defattr(-,root,root,-)
 %{_bindir}/*
-%{_libdir}/*.so
+%{_libdir}/libs3.so*
 
 %files devel
 %defattr(-,root,root,-)
 %{_includedir}/*
 %{_libdir}/*.a
+%{_libdir}/pkgconfig/*.pc
 
 %changelog
 * Tue Sep 15 2015  <huber@paradoxical.net> Josh Huber 2.0-1
