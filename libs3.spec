@@ -1,11 +1,11 @@
 Summary: C Library and Tools for Amazon S3 Access
 Name: libs3
-Version: trunk
-Release: 1
+Version: 2.0
+Release: 1%{?dist}
 License: GPL
 Group: Networking/Utilities
 URL: http://sourceforge.net/projects/reallibs3
-Source0: libs3-trunk.tar.gz
+Source: %{name}-%{version}.tar.gz
 Buildroot: %{_tmppath}/%{name}-%{version}-%{release}-root
 # Want to include curl dependencies, but older Fedora Core uses curl-devel,
 # and newer Fedora Core uses libcurl-devel ... have to figure out how to
@@ -54,26 +54,26 @@ http://s3.amazonaws.com).  Its design goals are:
 %setup -q
 
 %build
-BUILD=$RPM_BUILD_ROOT/build make exported
+%configure
+make %{?_smp_mflags}
 
 %install
-BUILD=$RPM_BUILD_ROOT/build DESTDIR=$RPM_BUILD_ROOT/usr make install
-rm -rf $RPM_BUILD_ROOT/build
-
-%clean
-rm -rf $RPM_BUILD_ROOT
+%make_install
 
 %files
 %defattr(-,root,root,-)
-/usr/bin/s3
-/usr/lib/libs3.so*
+%{_bindir}/*
+%{_libdir}/*.so
 
 %files devel
 %defattr(-,root,root,-)
-/usr/include/libs3.h
-/usr/lib/libs3.a
+%{_includedir}/*
+%{_libdir}/*.a
 
 %changelog
+* Tue Sep 15 2015  <huber@paradoxical.net> Josh Huber 2.0-1
+- Converted build process over to autotools.
+
 * Sat Aug 09 2008  <bryan@ischo,com> Bryan Ischo
 - Split into regular and devel packages.
 
