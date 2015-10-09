@@ -702,6 +702,13 @@ static const char *http_request_type_to_verb(HttpRequestType requestType)
 static S3Status compose_auth_header(const RequestParams *params,
                                     RequestComputedValues *values)
 {
+    if (params->bucketContext.secretAccessKey == NULL ||
+        strlen(params->bucketContext.secretAccessKey) == 0)
+        return S3StatusOK;
+    if (params->bucketContext.accessKeyId == NULL ||
+        strlen(params->bucketContext.accessKeyId) == 0)
+        return S3StatusOK;
+
     // We allow for:
     // 17 bytes for HTTP-Verb + \n
     // 129 bytes for Content-MD5 + \n
