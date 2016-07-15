@@ -1,6 +1,6 @@
 Summary: C Library and Tools for Amazon S3 Access
 Name: libs3
-Version: 2.0
+Version: 2.1
 Release: 1%{?dist}
 License: LGPL
 Group: Networking/Utilities
@@ -73,6 +73,9 @@ rm %{buildroot}/%{_libdir}/*.la
 %{_libdir}/pkgconfig/*.pc
 
 %changelog
+* Fri Jul 15 2016  <huber@paradoxical.net> Josh Huber 2.1-1
+- Pulled in upstream changes as of 2016-7-15.
+
 * Tue Sep 15 2015  <huber@paradoxical.net> Josh Huber 2.0-1
 - Converted build process over to autotools.
 
