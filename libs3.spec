@@ -2,7 +2,7 @@ Summary: C Library and Tools for Amazon S3 Access
 Name: libs3
 Version: 2.0
 Release: 1%{?dist}
-License: GPL
+License: LGPL
 Group: Networking/Utilities
 URL: http://sourceforge.net/projects/reallibs3
 Source: %{name}-%{version}.tar.gz

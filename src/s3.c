@@ -64,6 +64,7 @@ static int showResponsePropertiesG = 0;
 static S3Protocol protocolG = S3ProtocolHTTPS;
 static S3UriStyle uriStyleG = S3UriStylePath;
 static int retriesG = 5;
+static int verifyPeerG = 0;
 
 
 // Environment variables, saved as globals ----------------------------------
@@ -165,7 +166,7 @@ static void S3_init()
     S3Status status;
     const char *hostname = getenv("S3_HOSTNAME");
     
-    if ((status = S3_initialize("s3", S3_INIT_ALL, hostname))
+    if ((status = S3_initialize("s3", verifyPeerG|S3_INIT_ALL, hostname))
         != S3StatusOK) {
         fprintf(stderr, "Failed to initialize libs3: %s\n", 
                 S3_get_status_name(status));
@@ -200,6 +201,7 @@ static void usageExit(FILE *out)
 "   -s/--show-properties : show response properties on stdout\n"
 "   -r/--retries         : retry retryable failures this number of times\n"
 "                          (default is 5)\n"
+"   -v/--verify-peer     : verify peer SSL certificate (default is no)\n"
 "\n"
 "   Environment:\n"
 "\n"
@@ -740,6 +742,7 @@ static struct option longOptionsG[] =
     { "unencrypted",          no_argument,        0,  'u' },
     { "show-properties",      no_argument,        0,  's' },
     { "retries",              required_argument,  0,  'r' },
+    { "verify-peer",          no_argument,        0,  'v' },
     { 0,                      0,                  0,   0  }
 };
 
@@ -768,7 +771,7 @@ static S3Status responsePropertiesCallback
     print_nonnull("Request-Id", requestId);
     print_nonnull("Request-Id-2", requestId2);
     if (properties->contentLength > 0) {
-        printf("Content-Length: %lld\n", 
+        printf("Content-Length: %llu\n",
                (unsigned long long) properties->contentLength);
     }
     print_nonnull("Server", server);
@@ -1262,7 +1265,11 @@ static void list_bucket(const char *bucketName, const char *prefix,
 
     list_bucket_callback_data data;
 
-    snprintf(data.nextMarker, sizeof(data.nextMarker), "%s", marker);
+    if (marker) {
+        snprintf(data.nextMarker, sizeof(data.nextMarker), "%s", marker);
+    } else {
+        data.nextMarker[0] = 0;
+    }
     data.keyCount = 0;
     data.allDetails = allDetails;
 
@@ -1532,7 +1539,8 @@ static S3Status listPartsCallback(int isTruncated,
         nextKeyMarker = uploads[uploadsCount - 1].key;
     }*/
     if (nextPartNumberMarker) {
-        snprintf(data->nextPartNumberMarker, sizeof(data->nextPartNumberMarker), "%s", 
+        snprintf(data->nextPartNumberMarker,
+                 sizeof(data->nextPartNumberMarker), "%s", 
                  nextPartNumberMarker);
     }
     else {
@@ -1548,7 +1556,8 @@ static S3Status listPartsCallback(int isTruncated,
     }
 
     if (initiatorDisplayName) {
-        snprintf(data->initiatorDisplayName, sizeof(data->initiatorDisplayName), "%s", 
+        snprintf(data->initiatorDisplayName,
+                 sizeof(data->initiatorDisplayName), "%s", 
                  initiatorDisplayName);
     }
     else {
@@ -1583,21 +1592,6 @@ static S3Status listPartsCallback(int isTruncated,
         printListPartsHeader();
     }
 
-/*
-    if (upload->initiatorId) {
-                    printf("Initiator ID: %s\n", upload->initiatorId);
-                }
-                if (upload->initiatorDisplayName) {
-                    printf("Initiator Display Name: %s\n", upload->initiatorDisplayName);
-                }
-                if (upload->ownerId) {
-                    printf("Owner ID: %s\n", upload->ownerId);
-                }
-                if (upload->ownerDisplayName) {
-                    printf("Owner Display Name: %s\n", upload->ownerDisplayName);
-                }*/
-              
-
     int i;
     for (i = 0; i < partsCount; i++) {
         const S3ListPart *part = &(parts[i]);
@@ -1611,10 +1605,9 @@ static S3Status listPartsCallback(int isTruncated,
             strftime(timebuf, sizeof(timebuf), "%Y-%m-%dT%H:%M:%SZ",
                      gmtime(&t));
             printf("%-30s", timebuf);
-            printf("%-15" PRIu64, part->partNumber);
+            printf("%-15llu", (unsigned long long) part->partNumber);
             printf("%-45s", part->eTag);
-            printf("%-15" PRIu64 "\n", part->size);
-
+            printf("%-15llu\n", (unsigned long long) part->size);
         }
     }
 
@@ -1627,7 +1620,7 @@ static S3Status listPartsCallback(int isTruncated,
 static void list_multipart_uploads(int argc, char **argv, int optindex)
 {
     if (optindex == argc) {
-        fprintf(stderr, "\nERROR: Usage:listmultiparts <bucket name>\n");
+        fprintf(stderr, "\nERROR: Usage: listmultiparts <bucket name>\n");
         return;
     }
     const char *bucketName = 0;
@@ -1646,17 +1639,19 @@ static void list_multipart_uploads(int argc, char **argv, int optindex)
         else if (!strncmp(param, DELIMITER_PREFIX, DELIMITER_PREFIX_LEN)) {
             delimiter = &(param[DELIMITER_PREFIX_LEN]);
         }
-        else if (!strncmp(param, ENCODING_TYPE_PREFIX, ENCODING_TYPE_PREFIX_LEN)) {
+        else if (!strncmp(param, ENCODING_TYPE_PREFIX,
+                          ENCODING_TYPE_PREFIX_LEN)) {
             encodingtype = &(param[ENCODING_TYPE_PREFIX_LEN]);
         }
-        else if (!strncmp(param, UPLOAD_ID_MARKER_PREFIX, UPLOAD_ID_MARKER_PREFIX_LEN)) {
+        else if (!strncmp(param, UPLOAD_ID_MARKER_PREFIX,
+                          UPLOAD_ID_MARKER_PREFIX_LEN)) {
             uploadidmarker = &(param[UPLOAD_ID_MARKER_PREFIX_LEN]);
         }
         else if (!strncmp(param, MAX_UPLOADS_PREFIX, MAX_UPLOADS_PREFIX_LEN)) {
-            maxuploads = convertInt(&(param[MAX_UPLOADS_PREFIX_LEN]), "maxuploads");
+            maxuploads = convertInt(&(param[MAX_UPLOADS_PREFIX_LEN]),
+                                    "maxuploads");
         }
-        else if (!strncmp(param, ALL_DETAILS_PREFIX,
-                          ALL_DETAILS_PREFIX_LEN)) {
+        else if (!strncmp(param, ALL_DETAILS_PREFIX, ALL_DETAILS_PREFIX_LEN)) {
             const char *ad = &(param[ALL_DETAILS_PREFIX_LEN]);
             if (!strcmp(ad, "true") || !strcmp(ad, "TRUE") || 
                 !strcmp(ad, "yes") || !strcmp(ad, "YES") ||
@@ -1698,10 +1693,12 @@ static void list_multipart_uploads(int argc, char **argv, int optindex)
 
         memset(&data, 0, sizeof(list_multiparts_callback_data));
         if (keymarker != 0) {            
-            snprintf(data.nextKeyMarker, sizeof(data.nextKeyMarker), "%s", keymarker);
+            snprintf(data.nextKeyMarker, sizeof(data.nextKeyMarker), "%s",
+                     keymarker);
         }
         if (uploadidmarker != 0) {
-            snprintf(data.nextUploadIdMarker, sizeof(data.nextUploadIdMarker), "%s", uploadidmarker);
+            snprintf(data.nextUploadIdMarker, sizeof(data.nextUploadIdMarker),
+                     "%s", uploadidmarker);
         }
         data.uploadCount = 0;
         data.allDetails = allDetails;
@@ -1709,15 +1706,17 @@ static void list_multipart_uploads(int argc, char **argv, int optindex)
         do {
             data.isTruncated = 0;
             do {
-                S3_list_multipart_uploads(&bucketContext, prefix, data.nextKeyMarker,
-                                data.nextUploadIdMarker, encodingtype,
-                                delimiter, maxuploads,
-                               0, &listMultipartUploadsHandler, &data);
+                S3_list_multipart_uploads(&bucketContext, prefix,
+                                          data.nextKeyMarker,
+                                          data.nextUploadIdMarker, encodingtype,
+                                          delimiter, maxuploads, 0,
+                                          &listMultipartUploadsHandler, &data);
             } while (S3_status_is_retryable(statusG) && should_retry());
             if (statusG != S3StatusOK) {
                 break;
             }
-        } while (data.isTruncated && (!maxuploads || (data.uploadCount < maxuploads)));
+        } while (data.isTruncated &&
+                 (!maxuploads || (data.uploadCount < maxuploads)));
 
         if (statusG == S3StatusOK) {
             if (!data.uploadCount) {
@@ -1729,16 +1728,15 @@ static void list_multipart_uploads(int argc, char **argv, int optindex)
         }
 
         S3_deinitialize();
-        
     }
-   
 }
 
 
 static void list_parts(int argc, char **argv, int optindex)
 {
     if (optindex == argc) {
-        fprintf(stderr, "\nERROR: Usage:listparts <bucket name> <filename> <upload-id>\n");
+        fprintf(stderr, "\nERROR: Usage: listparts <bucket name> <filename> "
+                "<upload-id>\n");
         return;
     }
 
@@ -1764,10 +1762,12 @@ static void list_parts(int argc, char **argv, int optindex)
         if (!strncmp(param, UPLOAD_ID_PREFIX, UPLOAD_ID_PREFIX_LEN)) {
             uploadid = &(param[UPLOAD_ID_PREFIX_LEN]);
         }
-        else if (!strncmp(param, PART_NUMBER_MARKER_PREFIX, PART_NUMBER_MARKER_PREFIX_LEN)) {
+        else if (!strncmp(param, PART_NUMBER_MARKER_PREFIX,
+                          PART_NUMBER_MARKER_PREFIX_LEN)) {
             partnumbermarker = &(param[PART_NUMBER_MARKER_PREFIX_LEN]);
         }
-        else if (!strncmp(param, ENCODING_TYPE_PREFIX, ENCODING_TYPE_PREFIX_LEN)) {
+        else if (!strncmp(param, ENCODING_TYPE_PREFIX,
+                          ENCODING_TYPE_PREFIX_LEN)) {
             encodingtype = &(param[ENCODING_TYPE_PREFIX_LEN]);
         }
         else if (!strncmp(param, MAX_PARTS_PREFIX, MAX_PARTS_PREFIX_LEN)) {
@@ -1815,7 +1815,8 @@ static void list_parts(int argc, char **argv, int optindex)
 
         memset(&data, 0, sizeof(list_parts_callback_data));
         if (partnumbermarker != 0) {            
-            snprintf(data.nextPartNumberMarker, sizeof(data.nextPartNumberMarker), "%s", partnumbermarker);
+            snprintf(data.nextPartNumberMarker,
+                     sizeof(data.nextPartNumberMarker), "%s", partnumbermarker);
         }
         
         data.partsCount = 0;
@@ -1833,7 +1834,8 @@ static void list_parts(int argc, char **argv, int optindex)
             if (statusG != S3StatusOK) {
                 break;
             }
-        } while (data.isTruncated && (!maxparts || (data.partsCount < maxparts)));
+        } while (data.isTruncated &&
+                 (!maxparts || (data.partsCount < maxparts)));
 
         if (statusG == S3StatusOK) {
             if (!data.partsCount) {
@@ -1854,7 +1856,8 @@ static void list_parts(int argc, char **argv, int optindex)
 static void abort_multipart_upload(int argc, char **argv, int optindex)
 {
     if (optindex == argc) {
-        fprintf(stderr, "\nERROR: Usage:abortmultipartupload <bucket name> <upload-id>\n");
+        fprintf(stderr, "\nERROR: Usage: abortmultipartupload <bucket name> "
+                "<upload-id>\n");
         return;
     }
     
@@ -1905,39 +1908,34 @@ static void abort_multipart_upload(int argc, char **argv, int optindex)
         {
             { &responsePropertiesCallback, &responseCompleteCallback },
         };
-/*
+
+        /*
         list_multiparts_callback_data data;
 
         memset(&data, 0, sizeof(list_multiparts_callback_data));
         if (keymarker != 0) {            
-            snprintf(data.nextKeyMarker, sizeof(data.nextKeyMarker), "%s", keymarker);
+            snprintf(data.nextKeyMarker, sizeof(data.nextKeyMarker), "%s",
+                     keymarker);
         }
         if (uploadidmarker != 0) {
-            snprintf(data.nextUploadIdMarker, sizeof(data.nextUploadIdMarker), "%s", uploadidmarker);
+            snprintf(data.nextUploadIdMarker, sizeof(data.nextUploadIdMarker),
+                     "%s", uploadidmarker);
         }
         
         data.uploadCount = 0;
         data.allDetails = allDetails;
+        */
 
-*/        
         do {
             S3_abort_multipart_upload(&bucketContext, key, uploadid,
                            &abortMultipartUploadHandler);
         } while (S3_status_is_retryable(statusG) && should_retry());
             
         S3_deinitialize();
-        
     }
-   
 }
 
-/*
-static void list_parts(int argc, char **argv, int optindex)
-{
-    
 
-}
-*/
 // delete object -------------------------------------------------------------
 
 static void delete_object(int argc, char **argv, int optindex)
@@ -1995,6 +1993,7 @@ typedef struct put_object_callback_data
     FILE *infile;
     growbuffer *gb;
     uint64_t contentLength, originalContentLength;
+    uint64_t totalContentLength, totalOriginalContentLength;
     int noStatus;
 } put_object_callback_data;
 
@@ -2019,41 +2018,45 @@ static int putObjectDataCallback(int bufferSize, char *buffer,
     }
 
     data->contentLength -= ret;
+    data->totalContentLength -= ret;
 
     if (data->contentLength && !data->noStatus) {
         // Avoid a weird bug in MingW, which won't print the second integer
         // value properly when it's in the same call, so print separately
         printf("%llu bytes remaining ", 
-               (unsigned long long) data->contentLength);
+               (unsigned long long) data->totalContentLength);
         printf("(%d%% complete) ...\n",
-               (int) (((data->originalContentLength - 
-                        data->contentLength) * 100) /
-                      data->originalContentLength));
+               (int) (((data->totalOriginalContentLength - 
+                        data->totalContentLength) * 100) /
+                      data->totalOriginalContentLength));
     }
 
     return ret;
 }
 
-#define MULTIPART_CHUNK_SIZE (15<<20) //multipart is 15M
+#define MULTIPART_CHUNK_SIZE (15 << 20) // multipart is 15M
 
 typedef struct MultipartPartData {
     put_object_callback_data put_object_data;
     int seq;
-    UploadManager * manager;
+    UploadManager *manager;
 } MultipartPartData;
 
 
-S3Status initial_multipart_callback(const char * upload_id, void * callbackData) {
+S3Status initial_multipart_callback(const char * upload_id,
+                                    void * callbackData)
+{
     UploadManager *manager = (UploadManager *) callbackData;
     manager->upload_id = strdup(upload_id);
     return S3StatusOK;
 }
 
 
-S3Status MultipartResponseProperiesCallback(const S3ResponseProperties *properties, void *callbackData) {
-
+S3Status MultipartResponseProperiesCallback
+    (const S3ResponseProperties *properties, void *callbackData)
+{
     responsePropertiesCallback(properties, callbackData);
-    MultipartPartData * data = (MultipartPartData*) callbackData;
+    MultipartPartData *data = (MultipartPartData *) callbackData;
     int seq = data->seq;
     const char *etag = properties->eTag;
     data->manager->etags[seq - 1] = strdup(etag);
@@ -2061,14 +2064,15 @@ S3Status MultipartResponseProperiesCallback(const S3ResponseProperties *properti
     return S3StatusOK;
 }
 
-
-static int multipartPutXmlCallback(int bufferSize, char *buffer, void *callbackData) {
-    UploadManager * manager = (UploadManager*)callbackData;
+static int multipartPutXmlCallback(int bufferSize, char *buffer,
+                                   void *callbackData)
+{
+    UploadManager *manager = (UploadManager*)callbackData;
     int ret = 0;
     if (manager->remaining) {
-            int toRead = ((manager->remaining > bufferSize) ?
-                          bufferSize : manager->remaining);
-                growbuffer_read(&(manager->gb), toRead, &ret, buffer);
+        int toRead = ((manager->remaining > bufferSize) ?
+                      bufferSize : manager->remaining);
+        growbuffer_read(&(manager->gb), toRead, &ret, buffer);
     }
     manager->remaining -= ret;
     return ret;
@@ -2076,9 +2080,8 @@ static int multipartPutXmlCallback(int bufferSize, char *buffer, void *callbackD
 
 
 static int try_get_parts_info(const char *bucketName, const char *key, 
-                                         UploadManager *manager)
+                              UploadManager *manager)
 {
-   
     S3BucketContext bucketContext =
     {
         0,
@@ -2108,9 +2111,8 @@ static int try_get_parts_info(const char *bucketName, const char *key,
         data.isTruncated = 0;
         do {
             S3_list_parts(&bucketContext, key, data.nextPartNumberMarker,
-                            manager->upload_id, 0,
-                            0,
-                           0, &listPartsHandler, &data);
+                          manager->upload_id, 0, 0, 0, &listPartsHandler,
+                          &data);
         } while (S3_status_is_retryable(statusG) && should_retry());
         if (statusG != S3StatusOK) {
             break;
@@ -2130,7 +2132,8 @@ static int try_get_parts_info(const char *bucketName, const char *key,
     return 0;
 }
 
-static void put_object(int argc, char **argv, int optindex)
+static void put_object(int argc, char **argv, int optindex,
+                       const char *srcBucketName, const char *srcKey, unsigned long long srcSize)
 {
     if (optindex == argc) {
         fprintf(stderr, "\nERROR: Missing parameter: bucket/key\n");
@@ -2281,7 +2284,12 @@ static void put_object(int argc, char **argv, int optindex)
     data.gb = 0;
     data.noStatus = noStatus;
 
-    if (filename) {
+    if (srcSize) {
+        // This is really a COPY multipart, not a put, so take from source object
+        contentLength = srcSize;
+        data.infile = NULL;
+    }
+    else if (filename) {
         if (!contentLength) {
             struct stat statbuf;
             // Stat the file to get its length
@@ -2328,7 +2336,11 @@ static void put_object(int argc, char **argv, int optindex)
         }
     }
 
-    data.contentLength = data.originalContentLength = contentLength;
+    data.totalContentLength =
+    data.totalOriginalContentLength = 
+    data.contentLength =
+    data.originalContentLength =
+            contentLength;
 
     S3_init();
     
@@ -2385,19 +2397,21 @@ static void put_object(int argc, char **argv, int optindex)
         }
     }
     else {
-        
+        uint64_t totalContentLength = contentLength;
+        uint64_t todoContentLength = contentLength;
         UploadManager manager;
         manager.upload_id = 0;
         manager.gb = 0;
 
         //div round up
         int seq;
-        int totalSeq = (contentLength + MULTIPART_CHUNK_SIZE- 1)/ MULTIPART_CHUNK_SIZE;
+        int totalSeq = ((contentLength + MULTIPART_CHUNK_SIZE- 1) /
+                        MULTIPART_CHUNK_SIZE);
 
         MultipartPartData partData;
         int partContentLength = 0;
 
-        S3MultipartInitialHander handler = {
+        S3MultipartInitialHandler handler = {
             {
                 &responsePropertiesCallback,
                 &responseCompleteCallback
@@ -2418,7 +2432,7 @@ static void put_object(int argc, char **argv, int optindex)
             0
         };
         
-        manager.etags = (char**)malloc(sizeof(char*) * totalSeq);
+        manager.etags = (char **) malloc(sizeof(char *) * totalSeq);
         manager.next_etags_pos = 0;
                
         if (uploadId) {
@@ -2436,46 +2450,86 @@ static void put_object(int argc, char **argv, int optindex)
         do {
             S3_initiate_multipart(&bucketContext,key,0, &handler,0, &manager);
         } while (S3_status_is_retryable(statusG) && should_retry());
+
         if (manager.upload_id == 0 || statusG != S3StatusOK) {
             printError();
             goto clean;
         }
 
 upload: 
-        for(seq = manager.next_etags_pos+1 ; seq <= totalSeq ; seq ++) {
+        todoContentLength -= MULTIPART_CHUNK_SIZE * manager.next_etags_pos;
+        for (seq = manager.next_etags_pos + 1; seq <= totalSeq; seq++) {
             memset(&partData, 0, sizeof(MultipartPartData));
             partData.manager = &manager;
             partData.seq = seq;
             partData.put_object_data = data;
-            partContentLength = (contentLength > MULTIPART_CHUNK_SIZE)?MULTIPART_CHUNK_SIZE:contentLength;
-            printf("Sending Part Seq %d, length=%d\n", seq, partContentLength);
+            partContentLength = ((contentLength > MULTIPART_CHUNK_SIZE) ?
+                                 MULTIPART_CHUNK_SIZE : contentLength);
+            printf("%s Part Seq %d, length=%d\n", srcSize ? "Copying" : "Sending", seq, partContentLength);
             partData.put_object_data.contentLength = partContentLength;
+            partData.put_object_data.originalContentLength = partContentLength;
+            partData.put_object_data.totalContentLength = todoContentLength;
+            partData.put_object_data.totalOriginalContentLength = totalContentLength;
             putProperties.md5 = 0;
             do {
-                S3_upload_part(&bucketContext, key, &putProperties, &putObjectHandler, seq, manager.upload_id, partContentLength,0, &partData);
+                if (srcSize) {
+                    S3BucketContext srcBucketContext =
+                    {
+                        0,
+                        srcBucketName,
+                        protocolG,
+                        uriStyleG,
+                        accessKeyIdG,
+                        secretAccessKeyG,
+                        0
+                    };
+
+                    S3ResponseHandler copyResponseHandler = { &responsePropertiesCallback, &responseCompleteCallback };
+                    int64_t lastModified;
+
+                    unsigned long long startOffset = (unsigned long long)MULTIPART_CHUNK_SIZE * (unsigned long long)(seq-1);
+                    unsigned long long count = partContentLength - 1; // Inclusive for copies
+                    // The default copy callback tries to set this for us, need to allocate here
+                    manager.etags[seq-1] = malloc(512); // TBD - magic #!  Isa there a max etag defined?
+                    S3_copy_object_range(&srcBucketContext, srcKey, bucketName, key,
+                         seq, manager.upload_id,
+                         startOffset, count,
+                         &putProperties,
+                         &lastModified, 512 /*TBD - magic # */, manager.etags[seq-1], 0,
+                         &copyResponseHandler, 0);
+                } else {
+                    S3_upload_part(&bucketContext, key, &putProperties,
+                                   &putObjectHandler, seq, manager.upload_id,
+                                   partContentLength,0, &partData);
+                }
             } while (S3_status_is_retryable(statusG) && should_retry());
             if (statusG != S3StatusOK) {
                 printError();
                 goto clean;
             }
             contentLength -= MULTIPART_CHUNK_SIZE;
+            todoContentLength -= MULTIPART_CHUNK_SIZE;
         }
        
         int i;
         int size = 0;
-        size += growbuffer_append(&(manager.gb), "<CompleteMultipartUpload>", strlen("<CompleteMultipartUpload>"));
+        size += growbuffer_append(&(manager.gb), "<CompleteMultipartUpload>",
+                                  strlen("<CompleteMultipartUpload>"));
         char buf[256];
         int n;
-        for(i=0;i<totalSeq;i++) {
-            n = snprintf(buf,256,"<Part><PartNumber>%d</PartNumber><ETag>%s</ETag></Part>",
-                            i + 1,manager.etags[i]);
+        for (i = 0; i < totalSeq; i++) {
+            n = snprintf(buf, sizeof(buf), "<Part><PartNumber>%d</PartNumber>"
+                         "<ETag>%s</ETag></Part>", i + 1, manager.etags[i]);
             size += growbuffer_append(&(manager.gb), buf, n);
         }
-        size += growbuffer_append(&(manager.gb), "</CompleteMultipartUpload>",strlen("</CompleteMultipartUpload>"));
+        size += growbuffer_append(&(manager.gb), "</CompleteMultipartUpload>",
+                                  strlen("</CompleteMultipartUpload>"));
         manager.remaining = size;
 
         do {
-            S3_complete_multipart_upload(&bucketContext, key, &commit_handler, manager.upload_id, manager.remaining, 0,  &manager); 
+            S3_complete_multipart_upload(&bucketContext, key, &commit_handler,
+                                         manager.upload_id, manager.remaining,
+                                         0,  &manager); 
         } while (S3_status_is_retryable(statusG) && should_retry());
         if (statusG != S3StatusOK) {
             printError();
@@ -2483,9 +2537,10 @@ upload:
         }
 
     clean:
-        if(manager.upload_id)
+        if(manager.upload_id) {
             free(manager.upload_id);
-        for(i=0;i<manager.next_etags_pos;i++) {
+        }
+        for (i = 0; i < manager.next_etags_pos; i++) {
             free(manager.etags[i]);
         }
         growbuffer_destroy(manager.gb);
@@ -2497,6 +2552,30 @@ upload:
 
 
 // copy object ---------------------------------------------------------------
+static S3Status copyListKeyCallback(int isTruncated, const char *nextMarker,
+                                    int contentsCount,
+                                    const S3ListBucketContent *contents,
+                                    int commonPrefixesCount,
+                                    const char **commonPrefixes,
+                                    void *callbackData)
+{
+    unsigned long long *size = (unsigned long long *)callbackData;
+
+    // These are unused, avoid warnings in a hopefully portable way
+    (void)(nextMarker);
+    (void)(commonPrefixesCount);
+    (void)(commonPrefixes);
+    (void)(isTruncated);
+
+    if (contentsCount != 1) {
+        // We either have no matched or multiples...can't perform the operation
+        return S3StatusErrorUnexpectedContent;
+    }
+
+    *size = (unsigned long long) contents->size;
+    return S3StatusOK;
+}
+
 
 static void copy_object(int argc, char **argv, int optindex)
 {
@@ -2519,11 +2598,43 @@ static void copy_object(int argc, char **argv, int optindex)
 
     const char *sourceBucketName = argv[optindex++];
     const char *sourceKey = slash;
+    unsigned long long sourceSize = 0;
 
     if (optindex == argc) {
         fprintf(stderr, "\nERROR: Missing parameter: "
                 "destination bucket/key\n");
         usageExit(stderr);
+    }
+
+    S3_init();
+    S3BucketContext listBucketContext =
+    {
+        0,
+        sourceBucketName,
+        protocolG,
+        uriStyleG,
+        accessKeyIdG,
+        secretAccessKeyG,
+        0
+    };
+    S3ListBucketHandler listBucketHandler =
+    {
+        { &responsePropertiesCallback, &responseCompleteCallback },
+        &copyListKeyCallback
+    };
+    // Find size of existing key to determine if MP required
+    do {
+        S3_list_bucket(&listBucketContext, sourceKey, NULL,
+                       ".", 1, 0, &listBucketHandler, &sourceSize);
+    } while (S3_status_is_retryable(statusG) && should_retry());
+    if (statusG != S3StatusOK) {
+        fprintf(stderr, "\nERROR: Unable to get source object size\n");
+        exit(1);
+    }
+    if (sourceSize > MULTIPART_CHUNK_SIZE) {
+        printf("\nUsing multipart copy because object size %llu is above %d.\n", sourceSize, MULTIPART_CHUNK_SIZE);
+        put_object(argc, argv, optindex, sourceBucketName, sourceKey, sourceSize);
+        return;
     }
 
     // Split bucket/key
@@ -2641,7 +2752,6 @@ static void copy_object(int argc, char **argv, int optindex)
         }
     }
 
-    S3_init();
     
     S3BucketContext bucketContext =
     {
@@ -3545,7 +3655,7 @@ int main(int argc, char **argv)
     // Parse args
     while (1) {
         int idx = 0;
-        int c = getopt_long(argc, argv, "fhusr:", longOptionsG, &idx);
+        int c = getopt_long(argc, argv, "vfhusr:", longOptionsG, &idx);
 
         if (c == -1) {
             // End of options
@@ -3573,6 +3683,9 @@ int main(int argc, char **argv)
                 retriesG += *v - '0';
                 v++;
             }
+            break;
+        case 'v':
+            verifyPeerG = S3_INIT_VERIFY_PEER;
             break;
         }
         default:
@@ -3639,7 +3752,7 @@ int main(int argc, char **argv)
         }
     }
     else if (!strcmp(command, "put")) {
-        put_object(argc, argv, optind);
+        put_object(argc, argv, optind, NULL, NULL, 0);
     }
     else if (!strcmp(command, "copy")) {
         copy_object(argc, argv, optind);

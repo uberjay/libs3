@@ -32,6 +32,9 @@
 struct S3RequestContext
 {
     CURLM *curlm;
+    
+    int verifyPeerSet;
+    long verifyPeer;
 
     S3RequestContextSocketCallback *socketCallback;
     void *socketCallbackData;

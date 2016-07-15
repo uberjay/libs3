@@ -37,6 +37,7 @@
 
 #define USER_AGENT_SIZE 256
 #define REQUEST_STACK_SIZE 32
+static int verifyPeer;
 
 static char userAgentG[USER_AGENT_SIZE];
 
@@ -105,6 +106,9 @@ typedef struct RequestComputedValues
 
     // Authorization header
     char authorizationHeader[128];
+
+    // Host header
+    char hostHeader[128];
 } RequestComputedValues;
 
 
@@ -343,7 +347,8 @@ static S3Status compose_amz_headers(const RequestParams *params,
     // Add the x-amz-date header
     time_t now = time(NULL);
     char date[64];
-    strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", gmtime(&now));
+    struct tm gmt;
+    strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S GMT", gmtime_r(&now, &gmt));
     headers_append(1, "x-amz-date: %s", date);
 
     if (params->httpRequestType == HttpRequestTypeCOPY) {
@@ -354,6 +359,12 @@ static S3Status compose_amz_headers(const RequestParams *params,
                            params->copySourceBucketName,
                            params->copySourceKey);
         }
+        // If byteCount != 0 then we're just copying a range, add header
+        if (params->byteCount > 0) {
+            headers_append(1, "x-amz-copy-source-range: bytes=%ld-%ld",
+                           params->startByte,
+                           params->startByte + params->byteCount);
+        }
         // And the x-amz-metadata-directive header
         if (properties) {
             headers_append(1, "%s", "x-amz-metadata-directive: REPLACE");
@@ -362,7 +373,8 @@ static S3Status compose_amz_headers(const RequestParams *params,
 
     // Add the x-amz-security-token header if necessary
     if (params->bucketContext.securityToken) {
-        headers_append(1, "x-amz-security-token: %s", params->bucketContext.securityToken);
+        headers_append(1, "x-amz-security-token: %s",
+                       params->bucketContext.securityToken);
     }
 
     return S3StatusOK;
@@ -434,6 +446,25 @@ static S3Status compose_standard_headers(const RequestParams *params,
         }                                                                   \
     } while (0)
 
+    // Host
+    if (params->bucketContext.uriStyle == S3UriStyleVirtualHost) {
+        const char *requestHostName = params->bucketContext.hostName
+                ? params->bucketContext.hostName : defaultHostNameG;
+
+        size_t len = snprintf(values->hostHeader, sizeof(values->hostHeader),
+                              "Host: %s.%s", params->bucketContext.bucketName,
+                              requestHostName);
+        if (len >= sizeof(values->hostHeader)) {
+            return S3StatusUriTooLong;
+        }
+        while (is_blank(values->hostHeader[len])) {
+            len--;
+        }
+        values->hostHeader[len] = 0;
+    } else {
+        values->hostHeader[0] = 0;
+    }
+
     // Cache-Control
     do_put_header("Cache-Control: %s", cacheControl, cacheControlHeader,
                   S3StatusBadCacheControl, S3StatusCacheControlTooLong);
@@ -460,8 +491,9 @@ static S3Status compose_standard_headers(const RequestParams *params,
     // Expires
     if (params->putProperties && (params->putProperties->expires >= 0)) {
         time_t t = (time_t) params->putProperties->expires;
+        struct tm gmt;
         strftime(values->expiresHeader, sizeof(values->expiresHeader),
-                 "Expires: %a, %d %b %Y %H:%M:%S UTC", gmtime(&t));
+                 "Expires: %a, %d %b %Y %H:%M:%S UTC", gmtime_r(&t, &gmt));
     }
     else {
         values->expiresHeader[0] = 0;
@@ -471,9 +503,10 @@ static S3Status compose_standard_headers(const RequestParams *params,
     if (params->getConditions &&
         (params->getConditions->ifModifiedSince >= 0)) {
         time_t t = (time_t) params->getConditions->ifModifiedSince;
+        struct tm gmt;
         strftime(values->ifModifiedSinceHeader,
                  sizeof(values->ifModifiedSinceHeader),
-                 "If-Modified-Since: %a, %d %b %Y %H:%M:%S UTC", gmtime(&t));
+                 "If-Modified-Since: %a, %d %b %Y %H:%M:%S UTC", gmtime_r(&t, &gmt));
     }
     else {
         values->ifModifiedSinceHeader[0] = 0;
@@ -483,9 +516,10 @@ static S3Status compose_standard_headers(const RequestParams *params,
     if (params->getConditions &&
         (params->getConditions->ifNotModifiedSince >= 0)) {
         time_t t = (time_t) params->getConditions->ifNotModifiedSince;
+        struct tm gmt;
         strftime(values->ifUnmodifiedSinceHeader,
                  sizeof(values->ifUnmodifiedSinceHeader),
-                 "If-Unmodified-Since: %a, %d %b %Y %H:%M:%S UTC", gmtime(&t));
+                 "If-Unmodified-Since: %a, %d %b %Y %H:%M:%S UTC", gmtime_r(&t, &gmt));
     }
     else {
         values->ifUnmodifiedSinceHeader[0] = 0;
@@ -786,7 +820,15 @@ static S3Status compose_uri(char *buffer, int bufferSize,
     if (bucketContext->bucketName && 
         bucketContext->bucketName[0]) {
         if (bucketContext->uriStyle == S3UriStyleVirtualHost) {
-            uri_append("%s.%s", bucketContext->bucketName, hostName);
+            if (strchr(bucketContext->bucketName, '.') == NULL) {
+                uri_append("%s.%s", bucketContext->bucketName, hostName);
+            }
+            else {
+                // We'll use the hostName in the URL, and then explicitly set
+                // the Host header to match bucket.host so that host validation
+                // works.
+                uri_append("%s", hostName);
+            }
         }
         else {
             uri_append("%s/%s", hostName, bucketContext->bucketName);
@@ -811,7 +853,6 @@ static S3Status compose_uri(char *buffer, int bufferSize,
     
     return S3StatusOK;
 }
-
 
 // Sets up the curl handle given the completely computed RequestParams
 static S3Status setup_curl(Request *request,
@@ -869,8 +910,9 @@ static S3Status setup_curl(Request *request,
     // Don't use Curl's 'netrc' feature
     curl_easy_setopt_safe(CURLOPT_NETRC, CURL_NETRC_IGNORED);
 
-    // Ensure peer TLS verification is enabled.
-    curl_easy_setopt_safe(CURLOPT_SSL_VERIFYPEER, 1);
+    // Don't verify S3's certificate unless S3_INIT_VERIFY_PEER is set.
+    // The request_context may be set to override this
+    curl_easy_setopt_safe(CURLOPT_SSL_VERIFYPEER, verifyPeer);
 
     // Follow any redirection directives that S3 sends
     curl_easy_setopt_safe(CURLOPT_FOLLOWLOCATION, 1);
@@ -896,7 +938,8 @@ static S3Status setup_curl(Request *request,
     }
 
     // Would use CURLOPT_INFILESIZE_LARGE, but it is buggy in libcurl
-    if (params->httpRequestType == HttpRequestTypePUT || params->httpRequestType == HttpRequestTypePOST) {
+    if ((params->httpRequestType == HttpRequestTypePUT) ||
+        (params->httpRequestType == HttpRequestTypePOST)) {
         char header[256];
         snprintf(header, sizeof(header), "Content-Length: %llu",
                  (unsigned long long) params->toS3CallbackTotalSize);
@@ -909,6 +952,7 @@ static S3Status setup_curl(Request *request,
                                              "Transfer-Encoding:");
     }
     
+    append_standard_header(hostHeader);
     append_standard_header(cacheControlHeader);
     append_standard_header(contentTypeHeader);
     append_standard_header(md5Header);
@@ -1097,6 +1141,7 @@ S3Status request_api_initialize(const char *userAgentInfo, int flags,
         != CURLE_OK) {
         return S3StatusInternalError;
     }
+    verifyPeer = (flags & S3_INIT_VERIFY_PEER) != 0;
 
     if (!defaultHostName) {
         defaultHostName = S3_DEFAULT_HOSTNAME;
@@ -1118,9 +1163,7 @@ S3Status request_api_initialize(const char *userAgentInfo, int flags,
     char platform[96];
     struct utsname utsn;
     if (uname(&utsn)) {
-        strncpy(platform, "Unknown", sizeof(platform));
-        // Because strncpy doesn't always zero terminate
-        platform[sizeof(platform) - 1] = 0;
+        snprintf(platform, sizeof(platform), "Unknown");
     }
     else {
         snprintf(platform, sizeof(platform), "%s%s%s", utsn.sysname, 
@@ -1144,11 +1187,12 @@ void request_api_deinitialize()
     }
 }
 
-
 void request_perform(const RequestParams *params, S3RequestContext *context)
 {
     Request *request;
     S3Status status;
+    int verifyPeerRequest = verifyPeer;
+    CURLcode curlstatus;
 
 #define return_status(status)                                           \
     (*(params->completeCallback))(status, 0, params->callbackData);     \
@@ -1198,6 +1242,18 @@ void request_perform(const RequestParams *params, S3RequestContext *context)
     if ((status = request_get(params, &computed, &request)) != S3StatusOK) {
         return_status(status);
     }
+    if (context && context->verifyPeerSet) {
+        verifyPeerRequest = context->verifyPeerSet;
+    }
+    // Allow per-context override of verifyPeer
+    if (verifyPeerRequest != verifyPeer) {
+            if ((curlstatus = curl_easy_setopt(request->curl, 
+                                               CURLOPT_SSL_VERIFYPEER, 
+                                               context->verifyPeer))
+                != CURLE_OK) {
+                return_status(S3StatusFailedToInitializeRequest);
+            }
+    }
 
     // If a RequestContext was provided, add the request to the curl multi
     if (context) {
@@ -1227,6 +1283,7 @@ void request_perform(const RequestParams *params, S3RequestContext *context)
         if ((code != CURLE_OK) && (request->status == S3StatusOK)) {
             request->status = request_curl_code_to_status(code);
         }
+
         // Finish the request, ensuring that all callbacks have been made, and
         // also releases the request
         request_finish(request);
@@ -1329,6 +1386,7 @@ S3Status request_curl_code_to_status(CURLcode code)
         return S3StatusConnectionFailed;
     case CURLE_PARTIAL_FILE:
         return S3StatusOK;
+    case CURLE_PEER_FAILED_VERIFICATION:
     case CURLE_SSL_CACERT:
         return S3StatusServerFailedVerification;
     default:

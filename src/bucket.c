@@ -263,7 +263,7 @@ void S3_create_bucket(S3Protocol protocol, const char *accessKeyId,
         0,                                       // cacheControl
         0,                                       // contentDispositionFilename
         0,                                       // contentEncoding
-        0,                                       // expires
+       -1,                                       // expires
         cannedAcl,                               // cannedAcl
         0,                                       // metaDataCount
         0,                                       // metaData
@@ -677,13 +677,13 @@ void S3_list_bucket(const S3BucketContext *bucketContext, const char *prefix,
 
 
     int amp = 0;
-    if (prefix) {
+    if (prefix && *prefix) {
         safe_append("prefix", prefix);
     }
-    if (marker) {
+    if (marker && *marker) {
         safe_append("marker", marker);
     }
-    if (delimiter) {
+    if (delimiter && *delimiter) {
         safe_append("delimiter", delimiter);
     }
     if (maxkeys) {
