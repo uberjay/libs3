@@ -361,7 +361,7 @@ static S3Status compose_amz_headers(const RequestParams *params,
         }
         // If byteCount != 0 then we're just copying a range, add header
         if (params->byteCount > 0) {
-            headers_append(1, "x-amz-copy-source-range: bytes=%ld-%ld",
+            headers_append(1, "x-amz-copy-source-range: bytes=%" PRIu64 "-%" PRIu64,
                            params->startByte,
                            params->startByte + params->byteCount);
         }
